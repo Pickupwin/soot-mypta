@@ -1,64 +1,65 @@
 package pta;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeSet;
+import java.util.HashSet;
 
 import soot.Local;
 
-class AssignConstraint {
-	Local from, to;
-	AssignConstraint(Local from, Local to) {
-		this.from = from;
-		this.to = to;
-	}
-}
-
-class NewConstraint {
-	Local to;
-	int allocId;
-	NewConstraint(int allocId, Local to) {
-		this.allocId = allocId;
-		this.to = to;
+class Constraint {
+	public final Identifier dst, src;
+	public Constraint(Identifier dst, Identifier src){
+		this.dst=dst;
+		this.src=src;
 	}
 }
 
 public class Anderson {
-	private List<AssignConstraint> assignConstraintList = new ArrayList<AssignConstraint>();
-	private List<NewConstraint> newConstraintList = new ArrayList<NewConstraint>();
-	Map<Local, TreeSet<Integer>> pts = new HashMap<Local, TreeSet<Integer>>();
-	void addAssignConstraint(Local from, Local to) {
-		assignConstraintList.add(new AssignConstraint(from, to));
-	}
-	void addNewConstraint(int alloc, Local to) {
-		newConstraintList.add(new NewConstraint(alloc, to));		
-	}
-	void run() {
-		for (NewConstraint nc : newConstraintList) {
-			if (!pts.containsKey(nc.to)) {
-				pts.put(nc.to, new TreeSet<Integer>());
-			}
-			pts.get(nc.to).add(nc.allocId);
+
+	public final Map<String, Set<String>> pointTo = new HashMap<>();
+
+	private final List<Constraint> ConstraintsList = new ArrayList<Constraint>();
+
+	private boolean solveAlias(Identifier lhs, Identifier rhs){
+		boolean ret = false;
+		List<String> rhsList = rhs.genStringList(pointTo);
+		if (lhs.fa == null){
+			System.out.println(lhs.toString());
 		}
-		for (boolean flag = true; flag; ) {
-			flag = false;
-			for (AssignConstraint ac : assignConstraintList) {
-				if (!pts.containsKey(ac.from)) {
-					continue;
-				}	
-				if (!pts.containsKey(ac.to)) {
-					pts.put(ac.to, new TreeSet<Integer>());
-				}
-				if (pts.get(ac.to).addAll(pts.get(ac.from))) {
-					flag = true;
-				}
+		List<String> lhsList = lhs.fa.genStringList(pointTo);
+		for (String ls: lhsList) {
+			for (String rs: rhsList){
+				ret = ret || (pointTo.putIfAbsent(ls+"."+lhs.name, new HashSet<String>()) == null);
+				ret = ret || pointTo.get(ls+"."+lhs.name).add(rs);
 			}
 		}
+		return ret;
 	}
-	TreeSet<Integer> getPointsToSet(Local local) {
-		return pts.get(local);
+
+	public void addConstraint(Identifier dst, Identifier src) {
+		// for (String ls: dst.genStringList(pointTo)) {
+		// 	System.out.print(ls);
+		// }
+		// System.out.print("==");
+		// for (String ls: src.genStringList(pointTo)) {
+		// 	System.out.println(ls);
+		// }
+		ConstraintsList.add(new Constraint(dst, src));
+	}
+
+	public void solve() {
+		boolean modified = false;
+		do{
+			modified = false;
+			for (Constraint c : ConstraintsList) {
+				modified = modified || solveAlias(c.dst, c.src);
+			}
+		} while(modified);
 	}
 	
 }

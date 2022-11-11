@@ -2,6 +2,9 @@ package pta;
 
 import java.util.Map;
 import java.util.Map.Entry;
+
+import java.util.List;
+
 import java.util.TreeMap;
 import java.util.TreeSet;
 
@@ -9,69 +12,171 @@ import soot.Local;
 import soot.MethodOrMethodContext;
 import soot.Scene;
 import soot.SceneTransformer;
+import soot.SootField;
 import soot.SootMethod;
 import soot.Unit;
 import soot.Value;
+import soot.jimple.AnyNewExpr;
+import soot.jimple.CastExpr;
 import soot.jimple.DefinitionStmt;
+import soot.jimple.ReturnStmt;
+import soot.jimple.ThrowStmt;
+import soot.jimple.InstanceFieldRef;
+import soot.jimple.ParameterRef;
+import soot.jimple.ThisRef;
+import soot.jimple.InstanceInvokeExpr;
 import soot.jimple.IntConstant;
 import soot.jimple.InvokeExpr;
 import soot.jimple.InvokeStmt;
 import soot.jimple.NewExpr;
+import soot.jimple.StaticFieldRef;
 import soot.jimple.toolkits.callgraph.ReachableMethods;
 import soot.util.queue.QueueReader;
 
 public class WholeProgramTransformer extends SceneTransformer {
 	
+	private final Anderson solver = new Anderson();
+
+	private static final String ARGS_PREFIX = "@args";
+	private static final String HEAP_PREFIX = "@heap";
+	private static final String RET_LOCAL = "@return";
+	private static final String THIS_LOCAL = "@this";
+
+	private static final Identifier STATIC_IDENTIFIER = new Identifier("Heap__");
+
+
+	private int allocId;
+
+	private Identifier genIdentifier(Value v, String mSig){
+
+		if (v instanceof AnyNewExpr) {
+			int tmp=this.allocId;this.allocId=-1;
+			return new Identifier(HEAP_PREFIX+tmp);
+		}
+		if (v instanceof CastExpr) {
+			return genIdentifier(((CastExpr) v).getOp(), mSig);
+		}
+
+		if (v instanceof InstanceFieldRef) {
+			SootField f = ((InstanceFieldRef) v).getField();
+			Value base = ((InstanceFieldRef) v).getBase();
+			return new Identifier(genIdentifier(base, mSig), f.getSignature());
+		}
+		if (v instanceof StaticFieldRef) {
+			SootField f = ((StaticFieldRef) v).getField();
+			return new Identifier(STATIC_IDENTIFIER, f.getSignature());
+		}
+
+		if (v instanceof InvokeExpr) {
+			// System.out.println("Invoke__  "+v.toString());
+			InvokeExpr iv = (InvokeExpr) v;
+			List<Value> args = iv.getArgs();
+			String iSig = iv.getMethod().getSignature();
+			for (int i=0;i<args.size();++i) {
+				Identifier dst = new Identifier(new Identifier(iSig), ARGS_PREFIX+i);
+				Identifier src = genIdentifier(args.get(i), mSig);
+				solver.addConstraint(dst, src);
+			}
+			if (iv instanceof InstanceInvokeExpr) {
+				Identifier dst = new Identifier(new Identifier(iSig), THIS_LOCAL);
+				Identifier src = genIdentifier(((InstanceInvokeExpr) v).getBase(), mSig);
+				solver.addConstraint(dst, src);
+			}
+			return new Identifier(new Identifier(iSig), RET_LOCAL);
+		}
+		if (v instanceof Local) {
+			return new Identifier(new Identifier(mSig), ((Local) v).getName());
+		}
+		if (v instanceof ParameterRef) {
+			return new Identifier(new Identifier(mSig), ARGS_PREFIX+((ParameterRef) v).getIndex());
+		}
+		if (v instanceof ThisRef) {
+			// System.out.println("This__  "+v.toString());
+            return new Identifier(new Identifier(mSig), THIS_LOCAL);
+        }
+		//TODO;
+		return new Identifier("UNSUPPORTED");
+
+
+	}
+
 	@Override
 	protected void internalTransform(String arg0, Map<String, String> arg1) {
 		
-		TreeMap<Integer, Local> queries = new TreeMap<Integer, Local>();
-		Anderson anderson = new Anderson(); 
+		TreeMap<Integer, Identifier> queries = new TreeMap<Integer, Identifier>();
 		
 		ReachableMethods reachableMethods = Scene.v().getReachableMethods();
 		QueueReader<MethodOrMethodContext> qr = reachableMethods.listener();		
+		
+		this.allocId = -1;
+
 		while (qr.hasNext()) {
 			SootMethod sm = qr.next().method();
-			//if (sm.toString().contains("Hello")) {
-				//System.out.println(sm);
-				int allocId = 0;
-				if (sm.hasActiveBody()) {
-					for (Unit u : sm.getActiveBody().getUnits()) {
-						//System.out.println("S: " + u);
-						//System.out.println(u.getClass());
-						if (u instanceof InvokeStmt) {
-							InvokeExpr ie = ((InvokeStmt) u).getInvokeExpr();
-							if (ie.getMethod().toString().equals("<benchmark.internal.BenchmarkN: void alloc(int)>")) {
-								allocId = ((IntConstant)ie.getArgs().get(0)).value;
-							}
-							if (ie.getMethod().toString().equals("<benchmark.internal.BenchmarkN: void test(int,java.lang.Object)>")) {
-								Value v = ie.getArgs().get(1);
-								int id = ((IntConstant)ie.getArgs().get(0)).value;
-								queries.put(id, (Local)v);
-							}
+
+			String mSig=sm.getSignature();
+			if(mSig.startsWith("<java") || 
+				mSig.startsWith("<sun") || 
+				mSig.startsWith("<org") || 
+				mSig.startsWith("<jdk"))
+				continue;	//java, sun, org, jdk
+			if (sm.hasActiveBody()) {
+				for (Unit u : sm.getActiveBody().getUnits()) {
+					if (u instanceof InvokeStmt) {
+						InvokeExpr ie = ((InvokeStmt) u).getInvokeExpr();
+						if (ie.getMethod().toString().equals("<benchmark.internal.BenchmarkN: void alloc(int)>")) {
+							this.allocId = ((IntConstant)ie.getArgs().get(0)).value;
+							continue;
 						}
-						if (u instanceof DefinitionStmt) {
-							if (((DefinitionStmt)u).getRightOp() instanceof NewExpr) {
-								//System.out.println("Alloc " + allocId);
-								anderson.addNewConstraint(allocId, (Local)((DefinitionStmt) u).getLeftOp());
-							}
-							if (((DefinitionStmt)u).getLeftOp() instanceof Local && ((DefinitionStmt)u).getRightOp() instanceof Local) {
-								anderson.addAssignConstraint((Local)((DefinitionStmt) u).getRightOp(), (Local)((DefinitionStmt) u).getLeftOp());
-							}
+						if (ie.getMethod().toString().equals("<benchmark.internal.BenchmarkN: void test(int,java.lang.Object)>")) {
+							Value v = ie.getArgs().get(1);
+							int id = ((IntConstant)ie.getArgs().get(0)).value;
+							queries.put(id, genIdentifier(ie.getArgs().get(1), mSig));
+							continue;
 						}
+						genIdentifier(((InvokeStmt) u).getInvokeExpr(), mSig);
+						continue;
 					}
+					if (u instanceof DefinitionStmt) {
+						DefinitionStmt du = (DefinitionStmt) u;
+						Identifier lhs = genIdentifier(du.getLeftOp(), mSig);
+						Identifier rhs = genIdentifier(du.getRightOp(), mSig);
+						// TODO array;
+						solver.addConstraint(lhs, rhs);
+						continue;
+					}
+					if (u instanceof ReturnStmt) {
+						Identifier rhs = genIdentifier(((ReturnStmt) u).getOp(), mSig);
+						solver.addConstraint(new Identifier(new Identifier(mSig), RET_LOCAL), rhs); //TODO new Var;
+						continue;
+					}
+					// if (u instanceof ThrowStmt) { 
+					// 	//TODO
+					// }
 				}
-			//}
+			}
 		}
 		
-		anderson.run();
+		solver.solve();
+
 		String answer = "";
-		for (Entry<Integer, Local> q : queries.entrySet()) {
-			TreeSet<Integer> result = anderson.getPointsToSet(q.getValue());
+		for (Entry<Integer, Identifier> q : queries.entrySet()) {
+			List<String> result = q.getValue().genStringList(solver.pointTo);
 			answer += q.getKey().toString() + ":";
 			if (result != null) {
-				for (Integer i : result) {
-					answer += " " + i;
+				for (String i : result) {
+					Integer tmp=-1;
+					if (i.startsWith(HEAP_PREFIX) && !i.contains(".")){
+						try{
+							tmp=Integer.parseInt(i.substring(HEAP_PREFIX.length()));
+						}
+						catch (Exception e){
+							e.printStackTrace();
+						}
+						if(tmp>=0){
+							answer += " " + tmp;
+						}
+					}
+					// answer += " " + i;
 				}
 			}
 			answer += "\n";

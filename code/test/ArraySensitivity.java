@@ -22,7 +22,9 @@ public class ArraySensitivity {
     A a = new A(b[1]);
     BenchmarkN.test(1, a.f);
 
-    BenchmarkN.test(2, b[0]);
+    BenchmarkN.alloc(5);
+    A c = new A(b[0]);
+    BenchmarkN.test(2, c.f);
   }
 
 }

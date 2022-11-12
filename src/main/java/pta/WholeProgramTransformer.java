@@ -7,11 +7,14 @@ import java.util.List;
 
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.Set;
+import java.util.HashSet;
 
 import soot.Local;
 import soot.MethodOrMethodContext;
 import soot.Scene;
 import soot.SceneTransformer;
+import soot.SootClass;
 import soot.SootField;
 import soot.SootMethod;
 import soot.Unit;
@@ -35,6 +38,8 @@ import soot.util.queue.QueueReader;
 
 public class WholeProgramTransformer extends SceneTransformer {
 	
+	private final Set<String> doneMethod = new HashSet<>();
+
 	private final Anderson solver = new Anderson();
 
 	private static final String ARGS_PREFIX = "@args";
@@ -100,6 +105,51 @@ public class WholeProgramTransformer extends SceneTransformer {
 
 	}
 
+
+
+	private void doOverride(SootMethod m, SootClass c) {
+		SootMethod mVir = c.getMethodUnsafe(m.getSubSignature());
+		if (mVir!=null){
+			String vSig = mVir.getSignature();
+			String mSig = m.getSignature();
+			
+			Identifier lhs, rhs;
+
+			lhs = new Identifier(new Identifier(vSig), RET_LOCAL);
+			rhs = new Identifier(new Identifier(mSig), RET_LOCAL);
+			solver.addConstraint(lhs, rhs);
+
+			lhs = new Identifier(new Identifier(mSig), THIS_LOCAL);
+			rhs = new Identifier(new Identifier(vSig), THIS_LOCAL);
+			solver.addConstraint(lhs, rhs);
+
+			int arg_len = m.getParameterCount();
+			for (int i=0;i<arg_len;++i){
+				lhs = new Identifier(new Identifier(mSig), ARGS_PREFIX+i);
+				lhs = new Identifier(new Identifier(vSig), ARGS_PREFIX+i);
+				solver.addConstraint(lhs, rhs);
+			}
+			checkOverride(mVir);
+		}
+		else{
+			checkSuper(m, c);
+		}
+	}
+
+	private void checkSuper(SootMethod m, SootClass c) {
+		if(c.hasSuperclass())
+			doOverride(m, c.getSuperclass());
+		for (SootClass si: c.getInterfaces())
+			doOverride(m, si);
+	}
+	
+	private void checkOverride(SootMethod m) {
+		if (doneMethod.add(m.getSignature())) {
+			checkSuper(m, m.getDeclaringClass());
+		}
+	}
+
+
 	@Override
 	protected void internalTransform(String arg0, Map<String, String> arg1) {
 		
@@ -119,6 +169,9 @@ public class WholeProgramTransformer extends SceneTransformer {
 				mSig.startsWith("<org") || 
 				mSig.startsWith("<jdk"))
 				continue;	//java, sun, org, jdk
+			
+			boolean isNonVirtual = sm.isConstructor() || sm.isStatic() || sm.isStaticInitializer() || sm.isPrivate();
+			if(!isNonVirtual) checkOverride(sm);
 			if (sm.hasActiveBody()) {
 				for (Unit u : sm.getActiveBody().getUnits()) {
 					if (u instanceof InvokeStmt) {

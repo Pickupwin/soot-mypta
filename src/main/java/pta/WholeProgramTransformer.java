@@ -21,6 +21,7 @@ import soot.Unit;
 import soot.Value;
 import soot.jimple.AnyNewExpr;
 import soot.jimple.CastExpr;
+import soot.jimple.CaughtExceptionRef;
 import soot.jimple.DefinitionStmt;
 import soot.jimple.ReturnStmt;
 import soot.jimple.ThrowStmt;
@@ -52,7 +53,7 @@ public class WholeProgramTransformer extends SceneTransformer {
 	private static final String ARRAY_ANY = ELEM_PREFIX+"_any";
 
 	private static final Identifier STATIC_IDENTIFIER = new Identifier("Heap__");
-
+	private static final Identifier THROW_IDENTIFIER = new Identifier(STATIC_IDENTIFIER, "@throw");
 
 	private int allocId;
 	private int maxAlloxId=-1;
@@ -122,6 +123,9 @@ public class WholeProgramTransformer extends SceneTransformer {
 				solver.addConstraint(all, any);
 				return all;
 			}
+		}
+		if (v instanceof CaughtExceptionRef) {
+			return THROW_IDENTIFIER;
 		}
 		if (v instanceof IntConstant) {
 			// System.out.println("IntConstant " + v.toString());
@@ -240,6 +244,11 @@ public class WholeProgramTransformer extends SceneTransformer {
 					if (u instanceof ReturnStmt) {
 						Identifier rhs = genIdentifier(((ReturnStmt) u).getOp(), mSig);
 						solver.addConstraint(new Identifier(new Identifier(mSig), RET_LOCAL), rhs);
+						continue;
+					}
+					if (u instanceof ThrowStmt) {
+						Identifier rhs = genIdentifier(((ThrowStmt) u).getOp(), mSig);
+						solver.addConstraint(THROW_IDENTIFIER, rhs);
 						continue;
 					}
 				}

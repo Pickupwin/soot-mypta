@@ -1,15 +1,11 @@
 package pta;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeSet;
 import java.util.HashSet;
-
-import soot.Local;
 
 class Constraint {
 	public final Identifier dst, src;
@@ -29,15 +25,10 @@ public class Anderson {
 		boolean ret = false;
 		List<String> rhsList = rhs.genStringList(pointTo);
 		if (lhs.fa == null){
-			System.out.println(lhs.toString());
+			// System.out.println(lhs.toString());
+			return false;
 		}
 		List<String> lhsList = lhs.fa.genStringList(pointTo);
-		// if (rhs.getMethod()==lhs.getMethod()){
-		// if(lh)
-		// 	for i =0 to methodCounter[getMethod]
-			// ls. rs set method REPcnt;
-		// 		REP_PREFIX+.... = 
-		// }
 		for (String ls: lhsList) {
 			for (String rs: rhsList){
 				ret = ret || (pointTo.putIfAbsent(ls+"."+lhs.name, new HashSet<String>()) == null);
@@ -48,13 +39,6 @@ public class Anderson {
 	}
 
 	public void addConstraint(Identifier dst, Identifier src) {
-		// for (String ls: dst.genStringList(pointTo)) {
-		// 	System.out.print(ls);
-		// }
-		// System.out.print("==");
-		// for (String ls: src.genStringList(pointTo)) {
-		// 	System.out.println(ls);
-		// }
 		ConstraintsList.add(new Constraint(dst, src));
 	}
 

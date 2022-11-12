@@ -32,6 +32,12 @@ public class Anderson {
 			System.out.println(lhs.toString());
 		}
 		List<String> lhsList = lhs.fa.genStringList(pointTo);
+		// if (rhs.getMethod()==lhs.getMethod()){
+		// if(lh)
+		// 	for i =0 to methodCounter[getMethod]
+			// ls. rs set method REPcnt;
+		// 		REP_PREFIX+.... = 
+		// }
 		for (String ls: lhsList) {
 			for (String rs: rhsList){
 				ret = ret || (pointTo.putIfAbsent(ls+"."+lhs.name, new HashSet<String>()) == null);

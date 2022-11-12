@@ -27,6 +27,7 @@ import soot.jimple.ThrowStmt;
 import soot.jimple.InstanceFieldRef;
 import soot.jimple.ParameterRef;
 import soot.jimple.ThisRef;
+import soot.jimple.ArrayRef;
 import soot.jimple.InstanceInvokeExpr;
 import soot.jimple.IntConstant;
 import soot.jimple.InvokeExpr;
@@ -46,16 +47,21 @@ public class WholeProgramTransformer extends SceneTransformer {
 	private static final String HEAP_PREFIX = "@heap";
 	private static final String RET_LOCAL = "@return";
 	private static final String THIS_LOCAL = "@this";
+	private static final String ELEM_PREFIX = "@elem";
+	private static final String ARRAY_ALL = ELEM_PREFIX+"_all";
+	private static final String ARRAY_ANY = ELEM_PREFIX+"_any";
 
 	private static final Identifier STATIC_IDENTIFIER = new Identifier("Heap__");
 
 
 	private int allocId;
+	private int maxAlloxId=-1;
+	private boolean visitgg=false;
 
 	private Identifier genIdentifier(Value v, String mSig){
 
 		if (v instanceof AnyNewExpr) {
-			int tmp=this.allocId;this.allocId=-1;
+			int tmp=this.allocId;this.allocId=-1;	//TODO
 			return new Identifier(HEAP_PREFIX+tmp);
 		}
 		if (v instanceof CastExpr) {
@@ -77,6 +83,7 @@ public class WholeProgramTransformer extends SceneTransformer {
 			InvokeExpr iv = (InvokeExpr) v;
 			List<Value> args = iv.getArgs();
 			String iSig = iv.getMethod().getSignature();
+			// methodCounter[iSig]+=1;
 			for (int i=0;i<args.size();++i) {
 				Identifier dst = new Identifier(new Identifier(iSig), ARGS_PREFIX+i);
 				Identifier src = genIdentifier(args.get(i), mSig);
@@ -99,7 +106,29 @@ public class WholeProgramTransformer extends SceneTransformer {
 			// System.out.println("This__  "+v.toString());
             return new Identifier(new Identifier(mSig), THIS_LOCAL);
         }
-		//TODO;
+		if (v instanceof ArrayRef) {
+			ArrayRef av = (ArrayRef) v;
+			Identifier base = genIdentifier(av.getBase(), mSig);
+			Value idx = av.getIndex();
+			Identifier all = new Identifier(base, ARRAY_ALL);
+			Identifier any = new Identifier(base, ARRAY_ANY);
+			if (idx instanceof IntConstant) {
+				Identifier item = new Identifier(base, ELEM_PREFIX+((IntConstant) idx).value);
+				solver.addConstraint(item, any);
+				solver.addConstraint(all, item);
+				return item;
+			}
+			else{
+				solver.addConstraint(all, any);
+				return all;
+			}
+		}
+		if (v instanceof IntConstant) {
+			// System.out.println("IntConstant " + v.toString());
+			return new Identifier(STATIC_IDENTIFIER, "@Constant"+v.toString());
+		}
+		// System.out.println(v.toString());
+		// this.visitgg=true;
 		return new Identifier("UNSUPPORTED");
 
 
@@ -181,6 +210,9 @@ public class WholeProgramTransformer extends SceneTransformer {
 						InvokeExpr ie = ((InvokeStmt) u).getInvokeExpr();
 						if (ie.getMethod().toString().equals("<benchmark.internal.BenchmarkN: void alloc(int)>")) {
 							this.allocId = ((IntConstant)ie.getArgs().get(0)).value;
+							if(this.maxAlloxId<this.allocId){
+								this.maxAlloxId=this.allocId;
+							}
 							continue;
 						}
 						if (ie.getMethod().toString().equals("<benchmark.internal.BenchmarkN: void test(int,java.lang.Object)>")) {
@@ -196,18 +228,20 @@ public class WholeProgramTransformer extends SceneTransformer {
 						DefinitionStmt du = (DefinitionStmt) u;
 						Identifier lhs = genIdentifier(du.getLeftOp(), mSig);
 						Identifier rhs = genIdentifier(du.getRightOp(), mSig);
-						// TODO array;
-						solver.addConstraint(lhs, rhs);
+						if (ARRAY_ALL.equals(lhs.name)) {
+							Identifier lf = new Identifier(lhs.fa, ARRAY_ANY);
+							solver.addConstraint(lf, rhs);
+						}
+						else {
+							solver.addConstraint(lhs, rhs);
+						}
 						continue;
 					}
 					if (u instanceof ReturnStmt) {
 						Identifier rhs = genIdentifier(((ReturnStmt) u).getOp(), mSig);
-						solver.addConstraint(new Identifier(new Identifier(mSig), RET_LOCAL), rhs); //TODO new Var;
+						solver.addConstraint(new Identifier(new Identifier(mSig), RET_LOCAL), rhs);
 						continue;
 					}
-					// if (u instanceof ThrowStmt) { 
-					// 	//TODO
-					// }
 				}
 			}
 		}
@@ -218,21 +252,27 @@ public class WholeProgramTransformer extends SceneTransformer {
 		for (Entry<Integer, Identifier> q : queries.entrySet()) {
 			List<String> result = q.getValue().genStringList(solver.pointTo);
 			answer += q.getKey().toString() + ":";
-			if (result != null) {
-				for (String i : result) {
-					Integer tmp=-1;
-					if (i.startsWith(HEAP_PREFIX) && !i.contains(".")){
-						try{
-							tmp=Integer.parseInt(i.substring(HEAP_PREFIX.length()));
+			if(this.visitgg){
+				for (int i=1;i<=this.maxAlloxId;++i)
+					answer += " " + i;
+			}
+			else{
+				if (result != null) {
+					for (String i : result) {
+						Integer tmp=-1;
+						if (i.startsWith(HEAP_PREFIX) && !i.contains(".")){
+							try{
+								tmp=Integer.parseInt(i.substring(HEAP_PREFIX.length()));
+							}
+							catch (Exception e){
+								// e.printStackTrace();
+							}
+							if(tmp>=0){
+								answer += " " + tmp;
+							}
 						}
-						catch (Exception e){
-							e.printStackTrace();
-						}
-						if(tmp>=0){
-							answer += " " + tmp;
-						}
+						// answer += " " + i;
 					}
-					// answer += " " + i;
 				}
 			}
 			answer += "\n";

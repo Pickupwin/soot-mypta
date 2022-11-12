@@ -9,6 +9,7 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.Set;
 import java.util.HashSet;
+import java.util.HashMap;
 
 import soot.Local;
 import soot.MethodOrMethodContext;
@@ -40,9 +41,11 @@ import soot.util.queue.QueueReader;
 public class WholeProgramTransformer extends SceneTransformer {
 	
 	private final Set<String> doneMethod = new HashSet<>();
+	private final Map<String, Integer> methodCounter = new HashMap<String, Integer>();
 
 	private final Anderson solver = new Anderson();
 
+	private static final String REP_PREFIX = "@repeat";
 	private static final String ARGS_PREFIX = "@args";
 	private static final String HEAP_PREFIX = "@heap";
 	private static final String RET_LOCAL = "@return";
@@ -51,17 +54,17 @@ public class WholeProgramTransformer extends SceneTransformer {
 	private static final String ARRAY_ALL = ELEM_PREFIX+"_all";
 	private static final String ARRAY_ANY = ELEM_PREFIX+"_any";
 
-	private static final Identifier STATIC_IDENTIFIER = new Identifier("Heap__");
+	private static final Identifier STATIC_IDENTIFIER = new Identifier(HEAP_PREFIX+"._");
 
-
+	private int allocCnt=1;
 	private int allocId;
 	private int maxAlloxId=-1;
-	private boolean visitgg=false;
 
 	private Identifier genIdentifier(Value v, String mSig){
 
 		if (v instanceof AnyNewExpr) {
-			int tmp=this.allocId;this.allocId=-1;	//TODO
+			allocCnt+=1;
+			int tmp=this.allocId;this.allocId=-allocCnt;
 			return new Identifier(HEAP_PREFIX+tmp);
 		}
 		if (v instanceof CastExpr) {
@@ -83,18 +86,20 @@ public class WholeProgramTransformer extends SceneTransformer {
 			InvokeExpr iv = (InvokeExpr) v;
 			List<Value> args = iv.getArgs();
 			String iSig = iv.getMethod().getSignature();
-			// methodCounter[iSig]+=1;
+			Integer mc = methodCounter.computeIfAbsent(iSig, key -> 1);
+			methodCounter.put(iSig, mc+1);
+			String repSig = REP_PREFIX+mc+iSig;
 			for (int i=0;i<args.size();++i) {
-				Identifier dst = new Identifier(new Identifier(iSig), ARGS_PREFIX+i);
+				Identifier dst = new Identifier(new Identifier(repSig), ARGS_PREFIX+i);
 				Identifier src = genIdentifier(args.get(i), mSig);
 				solver.addConstraint(dst, src);
 			}
 			if (iv instanceof InstanceInvokeExpr) {
-				Identifier dst = new Identifier(new Identifier(iSig), THIS_LOCAL);
+				Identifier dst = new Identifier(new Identifier(repSig), THIS_LOCAL);
 				Identifier src = genIdentifier(((InstanceInvokeExpr) v).getBase(), mSig);
 				solver.addConstraint(dst, src);
 			}
-			return new Identifier(new Identifier(iSig), RET_LOCAL);
+			return new Identifier(new Identifier(repSig), RET_LOCAL);
 		}
 		if (v instanceof Local) {
 			return new Identifier(new Identifier(mSig), ((Local) v).getName());
@@ -128,7 +133,6 @@ public class WholeProgramTransformer extends SceneTransformer {
 			return new Identifier(STATIC_IDENTIFIER, "@Constant"+v.toString());
 		}
 		// System.out.println(v.toString());
-		// this.visitgg=true;
 		return new Identifier("UNSUPPORTED");
 
 
@@ -145,18 +149,18 @@ public class WholeProgramTransformer extends SceneTransformer {
 			Identifier lhs, rhs;
 
 			lhs = new Identifier(new Identifier(vSig), RET_LOCAL);
-			rhs = new Identifier(new Identifier(mSig), RET_LOCAL);
+			rhs = new Identifier(new Identifier(REP_PREFIX+mSig), RET_LOCAL);
 			// System.out.println(lhs.toString()+" == "+rhs.toString());
 			solver.addConstraint(lhs, rhs);
 
-			lhs = new Identifier(new Identifier(mSig), THIS_LOCAL);
+			lhs = new Identifier(new Identifier(REP_PREFIX+mSig), THIS_LOCAL);
 			rhs = new Identifier(new Identifier(vSig), THIS_LOCAL);
 			// System.out.println(lhs.toString()+" == "+rhs.toString());
 			solver.addConstraint(lhs, rhs);
 
 			int arg_len = m.getParameterCount();
 			for (int i=0;i<arg_len;++i){
-				lhs = new Identifier(new Identifier(mSig), ARGS_PREFIX+i);
+				lhs = new Identifier(new Identifier(REP_PREFIX+mSig), ARGS_PREFIX+i);
 				rhs = new Identifier(new Identifier(vSig), ARGS_PREFIX+i);
 				// System.out.println(lhs.toString()+" == "+rhs.toString());
 				solver.addConstraint(lhs, rhs);
@@ -216,7 +220,6 @@ public class WholeProgramTransformer extends SceneTransformer {
 							continue;
 						}
 						if (ie.getMethod().toString().equals("<benchmark.internal.BenchmarkN: void test(int,java.lang.Object)>")) {
-							Value v = ie.getArgs().get(1);
 							int id = ((IntConstant)ie.getArgs().get(0)).value;
 							queries.put(id, genIdentifier(ie.getArgs().get(1), mSig));
 							continue;
@@ -246,33 +249,39 @@ public class WholeProgramTransformer extends SceneTransformer {
 			}
 		}
 		
-		solver.solve();
+		solver.solve(methodCounter);
 
 		String answer = "";
 		for (Entry<Integer, Identifier> q : queries.entrySet()) {
 			List<String> result = q.getValue().genStringList(solver.pointTo);
 			answer += q.getKey().toString() + ":";
-			if(this.visitgg){
-				for (int i=1;i<=this.maxAlloxId;++i)
-					answer += " " + i;
-			}
-			else{
-				if (result != null) {
-					for (String i : result) {
-						Integer tmp=-1;
-						if (i.startsWith(HEAP_PREFIX) && !i.contains(".")){
-							try{
-								tmp=Integer.parseInt(i.substring(HEAP_PREFIX.length()));
-							}
-							catch (Exception e){
-								// e.printStackTrace();
-							}
-							if(tmp>=0){
+			boolean visit0=true;
+			if (result != null) {
+				for (String i : result) {
+					Integer tmp=-1;
+					boolean gotInt=true;
+					if (i.startsWith(HEAP_PREFIX) && !i.contains(".")){
+						try{
+							tmp=Integer.parseInt(i.substring(HEAP_PREFIX.length()));
+						}
+						catch (Exception e){
+							// e.printStackTrace();
+							gotInt=false;
+						}
+						if(gotInt){
+							if(tmp>0){
 								answer += " " + tmp;
 							}
+							else{
+								// System.out.println(i);
+								if (!visit0){
+									answer += " 0";
+								}
+								visit0=true;
+							}
 						}
-						// answer += " " + i;
 					}
+					// answer += " " + i;
 				}
 			}
 			answer += "\n";

@@ -18,6 +18,18 @@ public class Identifier {
         this.name=str;
     }
 
+    public Identifier addPrefix(String prefix){
+        if (this.fa==null) {
+            return new Identifier(prefix+this.name);
+        }
+        return new Identifier(this.fa.addPrefix(prefix), this.name);
+    }
+    public String getMethod(){
+        if(this.fa!=null){
+            return this.fa.getMethod();
+        }
+        return this.name;
+    }
     public String toString(){
         if(this.fa!=null){
             return this.fa.toString()+"."+this.name;

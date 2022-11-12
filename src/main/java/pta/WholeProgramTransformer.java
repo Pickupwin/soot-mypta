@@ -117,16 +117,19 @@ public class WholeProgramTransformer extends SceneTransformer {
 
 			lhs = new Identifier(new Identifier(vSig), RET_LOCAL);
 			rhs = new Identifier(new Identifier(mSig), RET_LOCAL);
+			// System.out.println(lhs.toString()+" == "+rhs.toString());
 			solver.addConstraint(lhs, rhs);
 
 			lhs = new Identifier(new Identifier(mSig), THIS_LOCAL);
 			rhs = new Identifier(new Identifier(vSig), THIS_LOCAL);
+			// System.out.println(lhs.toString()+" == "+rhs.toString());
 			solver.addConstraint(lhs, rhs);
 
 			int arg_len = m.getParameterCount();
 			for (int i=0;i<arg_len;++i){
 				lhs = new Identifier(new Identifier(mSig), ARGS_PREFIX+i);
-				lhs = new Identifier(new Identifier(vSig), ARGS_PREFIX+i);
+				rhs = new Identifier(new Identifier(vSig), ARGS_PREFIX+i);
+				// System.out.println(lhs.toString()+" == "+rhs.toString());
 				solver.addConstraint(lhs, rhs);
 			}
 			checkOverride(mVir);

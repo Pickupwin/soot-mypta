@@ -1,2 +1,5 @@
 *.jar
 *.class
+target
+sootOutput
+result.txt
